@@ -398,6 +398,13 @@ void run(unsigned thread_id, Address public_ip, Address private_ip,
                         .count();
 
     if (duration >= kServerReportThreshold) {
+      unsigned cnt = 0;
+      double mean = 0;
+      double ms = 0;
+      double std = 0;
+      double upper = 0;
+      double lower = 0;
+
       epoch += 1;
 
       Key key = get_metadata_key(wt, kSelfTierId, wt.get_tid(),
@@ -449,11 +456,64 @@ void run(unsigned thread_id, Address public_ip, Address private_ip,
         kZmqUtil->send_string(serialized, &pushers[target_address]);
       }
 
+      for (const auto& key_access_pair : key_access_timestamp) {
+        Key key = key_access_pair.first;
+        unsigned total_access = 0;
+
+        total_access = (key_access_pair.second).size();
+
+        if (total_access > 0) {
+          cnt += 1;
+
+          double delta = total_access - mean;
+          mean += (double)delta / cnt;
+
+          double delta2 = total_access - mean;
+          ms += delta * delta2;
+        }
+      }
+
+      std = sqrt((double)ms / cnt);
+
+      /*
+      for (const auto& key_access_pair : key_access_timestamp) {
+        Key key = key_access_pair.first;
+        unsigned total_access = 0;
+
+        total_access = (key_access_pair.second).size();
+
+        if (total_access > 0) {
+          cnt += 1;
+          mean += total_access;
+        }
+      }
+
+      mean = mean / cnt;
+
+      for (const auto& key_access_pair : key_access_timestamp) {
+        Key key = key_access_pair.first;
+        unsigned total_access = 0;
+
+        total_access = (key_access_pair.second).size();
+
+        if (total_access > 0) {
+          std += pow((total_access - mean), 2);
+        }
+      }
+
+      std = sqrt(((double)std) / cnt);
+      */
+
+      upper = mean + std;
+      lower = mean - std;
+
       // compute key access stats
       KeyAccessData access;
       auto current_time = std::chrono::system_clock::now();
 
       for (const auto& key_access_pair : key_access_timestamp) {
+        int access_count = 0;
+
         Key key = key_access_pair.first;
         auto access_times = key_access_pair.second;
 
@@ -467,10 +527,15 @@ void run(unsigned thread_id, Address public_ip, Address private_ip,
           }
         }
 
-        // update key_access_frequency
-        KeyAccessData_KeyCount* tp = access.add_keys();
-        tp->set_key(key);
-        tp->set_access_count(access_times.size());
+        access_count = access_times.size();
+
+        // check if key_access_frequency is above or below the mean
+        if((access_count > upper) || (access_count < lower)) {
+          // update key_access_frequency
+          KeyAccessData_KeyCount* tp = access.add_keys();
+          tp->set_key(key);
+          tp->set_access_count(access_count);
+        }
       }
 
       // report key access stats
